@@ -1,0 +1,5 @@
+Text: 
+
+Sentiment: Neutral
+Score: 0.0
+Magnitude: 0.0

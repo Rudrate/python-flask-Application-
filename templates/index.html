@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Audio Recorder & Sentiment Analysis</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      width: 90%;
+      margin: 20px auto;
+      background: white;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 2px 2px 10px gray;
+    }
+    button {
+      padding: 10px 15px;
+      border: none;
+      background: #acaf4c;
+      color: white;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background: #ffd700;
+    }
+    #timer {
+      font-size: 18px;
+      margin-top: 10px;
+    }
+    ul {
+      list-style-type: none;
+      padding: 0;
+    }
+    li {
+      margin-bottom: 1em;
+    }
+    .error-message {
+      color: red;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Audio Recorder & Sentiment Analysis</h1>
+    <p class="error-message" id="errorMessage"></p>
+    <button id="record">Record</button>
+    <button id="stop" disabled>Stop</button>
+    <p id="timer">00:00</p>
+    <audio id="audio" controls></audio>
+    <hr />
+    <h2>Recorded Audio Files</h2>
+    <ul id="audioList">
+      {% for file in audio_files %}
+      <li>
+        <audio controls>
+          <source src="{{ url_for('uploaded_file', filename=file) }}" type="audio/mp3">
+          Your browser does not support the audio element.
+        </audio>
+        <br><strong>{{ file }}</strong>
+        <p>
+          <a href="{{ url_for('uploaded_file', filename=file.replace('.mp3', '_sentiment.txt')) }}"
+             target="_blank">
+            Download Sentiment Analysis
+          </a>
+        </p>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <script>
+    function displayErrorMessage(message) {
+      document.getElementById("errorMessage").textContent = message;
+    }
+  </script>
+  <script src="/static/script.js"></script>
+</body>
+</html>
