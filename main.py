@@ -2,165 +2,214 @@ import os
 import subprocess
 import soundfile as sf
 import noisereduce as nr
+import uuid
+import json
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from werkzeug.utils import secure_filename
 from datetime import datetime
+import fitz
 
-
+# Vertex AI imports for LLM operations
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
+from google.cloud import texttospeech
 
 app = Flask(__name__)
-app.secret_key = "secure_random_key"
-
+app.secret_key = "secure_random_key"  # Update with an appropriate secret key
 
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Setting the project ID and initialize Vertex AI
-project_id = 'python-flash-website'
+# File to persist conversation history (using JSON Lines)
+HISTORY_FILE = os.path.join(UPLOAD_FOLDER, "conversation_history.txt")
+
+# Initialize Vertex AI with your project details
+project_id = 'python-flash-website'  # Update with your project ID as necessary
 vertexai.init(project=project_id, location="us-central1")
 model = GenerativeModel("gemini-1.5-flash-001")
 
-ALLOWED_EXTENSIONS = {'wav', 'mp3', 'webm'}
+ALLOWED_EXTENSIONS = {'wav', 'mp3', 'webm', 'pdf'}
 
-# Prompt that instructs the LLM to provide transcript + sentiment
-MODEL_PROMPT = """
-Please provide an exact transcript for the audio, followed by sentiment analysis.
-
-Your response should follow the format:
-
-Text: USERS SPEECH TRANSCRIPTION
-
-Sentiment Analysis: positive|neutral|negative
-"""
-
-def is_audio_file(filename):
-    """Check if file extension is supported."""
+def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def webm_to_wav(source_path):
-    """Convert WebM to WAV using ffmpeg."""
-    output_wav = source_path.replace('.webm', '.wav')
+def convert_webm_to_wav(in_path):
+    wav_path = in_path.replace('.webm', '.wav')
     try:
-        subprocess.run(['ffmpeg', '-i', source_path, '-ac', '1', '-ar', '16000', output_wav], check=True)
-        os.remove(source_path) 
-        return output_wav
+        subprocess.run(['ffmpeg', '-i', in_path, '-ac', '1', '-ar', '16000', wav_path], check=True)
+        os.remove(in_path)  # Remove the original WebM file
+        return wav_path
     except Exception as e:
         print(f"[ERROR] WebM to WAV conversion failed: {e}")
         return None
 
-def wav_to_mp3(source_path):
-    """Convert WAV to MP3 using ffmpeg."""
-    output_mp3 = source_path.replace('.wav', '.mp3')
+def convert_wav_to_mp3(in_path):
+    mp3_path = in_path.replace('.wav', '.mp3')
     try:
-        subprocess.run(['ffmpeg', '-i', source_path, '-ac', '1', '-ar', '16000', '-b:a', '128k', output_mp3], check=True)
-        return output_mp3
+        subprocess.run(['ffmpeg', '-i', in_path, '-ac', '1', '-ar', '16000', '-b:a', '128k', mp3_path], check=True)
+        return mp3_path
     except Exception as e:
         print(f"[ERROR] WAV to MP3 conversion failed: {e}")
         return None
 
-def remove_background_noise(audio_path):
-    """Apply noise reduction using noisereduce."""
+def reduce_noise(audio_path):
     try:
-        audio_data, sample_rate = sf.read(audio_path, dtype='float32')
-        if len(audio_data.shape) > 1:
-            audio_data = audio_data.mean(axis=1)  
-        clean_audio = nr.reduce_noise(y=audio_data, sr=sample_rate, y_noise=audio_data[:sample_rate])
-        sf.write(audio_path, clean_audio, sample_rate)
+        data, sr = sf.read(audio_path, dtype='float32')
+        if len(data.shape) > 1:
+            data = data.mean(axis=1)
+        cleaned = nr.reduce_noise(y=data, sr=sr, y_noise=data[:sr])
+        sf.write(audio_path, cleaned, sr)
     except Exception as e:
         print(f"[WARNING] Noise reduction failed: {e}")
 
-@app.route('/')
-def homepage():
-    """Render the index page with a list of recorded MP3 files."""
-    recorded_files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith('.mp3')]
-    return render_template('index.html', audio_files=recorded_files)
+def extract_pdf_text(pdf_path):
+    doc = fitz.open(pdf_path)
+    text_data = ""
+    for page in doc:
+        text_data += page.get_text()
+    doc.close()
+    return text_data
 
-@app.route('/upload', methods=['POST'])
-def handle_audio_upload():
-    """
-    1) Receive an audio file from the user.
-    2) Convert webm -> wav -> (noise reduce) -> mp3.
-    3) Call Vertex AI (Gemini) to get transcript & sentiment in a single step.
-    4) Save transcript & sentiment to text files.
-    """
+# Global variable for storing book text
+book_text = ""
+
+@app.route('/upload_pdf', methods=['POST'])
+def upload_pdf():
+    global book_text
+    if 'bookPdf' not in request.files:
+        return "No file part", 400
+    pdf_file = request.files['bookPdf']
+    if pdf_file.filename == '':
+        return "No file selected", 400
+    if not allowed_file(pdf_file.filename):
+        return "Unsupported file", 400
+
+    filename = secure_filename(pdf_file.filename)
+    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    pdf_file.save(pdf_path)
+    book_text = extract_pdf_text(pdf_path)
+    return "Book uploaded and parsed successfully!", 200
+
+def text_to_speech(text):
+    client = texttospeech.TextToSpeechClient()
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="en-US", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL)
+    config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+    response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=config)
+    out_name = f"tts_{uuid.uuid4().hex[:8]}.mp3"
+    out_path = os.path.join(UPLOAD_FOLDER, out_name)
+    with open(out_path, 'wb') as f:
+        f.write(response.audio_content)
+    return out_name
+
+# ---- UPDATED CONVERSATION HISTORY FUNCTIONS ----
+
+def append_history(question, answer, tts_filename):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    history_entry = {
+        "timestamp": timestamp,
+        "question": question,
+        "answer": answer,
+        "audio": tts_filename
+    }
+    with open(HISTORY_FILE, 'a') as file:
+        file.write(json.dumps(history_entry) + "\n")
+
+def load_history():
+    history_entries = []
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, 'r') as file:
+            for line in file:
+                if line.strip():
+                    try:
+                        entry = json.loads(line.strip())
+                        history_entries.append(entry)
+                    except json.JSONDecodeError as e:
+                        print(f"[WARNING] Could not decode history entry: {e}")
+    return history_entries
+
+# -------------------------------------------------
+
+@app.route('/')
+def index():
+    history = load_history()
+    recorded_files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith('.mp3')]
+    return render_template('index.html', conversation_history=history, audio_files=recorded_files)
+
+@app.route('/ask_book', methods=['POST'])
+def ask_book():
+    global book_text
+    if not book_text:
+        return jsonify({'error': 'Please upload a book first.'}), 400
     if 'audio_data' not in request.files:
-        return jsonify({'error': 'No audio data received'}), 400
+        return jsonify({'error': 'No audio data received.'}), 400
 
     file = request.files['audio_data']
-    if file.filename == '' or not is_audio_file(file.filename):
-        return jsonify({'error': 'Invalid file type or empty filename'}), 400
+    if file.filename == '' or not allowed_file(file.filename):
+        return jsonify({'error': 'Invalid or missing file.'}), 400
 
-    # Savint the initial webm file
-    filename = secure_filename(f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.webm")
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(file_path)
-    print(f"[INFO] Uploaded file: {file_path}")
+    # Save the uploaded audio (WebM format)
+    webm_name = secure_filename(f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.webm")
+    webm_path = os.path.join(UPLOAD_FOLDER, webm_name)
+    file.save(webm_path)
 
-    # Converting WebM to WAV
-    wav_file = webm_to_wav(file_path)
-    if not wav_file:
-        return jsonify({'error': 'WebM to WAV conversion failed'}), 500
-
-    # Applying noise reduction (optional)
-    remove_background_noise(wav_file)
-
-    # Converting  WAV to MP3 for playback
-    mp3_file = wav_to_mp3(wav_file)
+    wav_path = convert_webm_to_wav(webm_path)
+    if not wav_path:
+        return jsonify({'error': 'Conversion to WAV failed.'}), 500
+    reduce_noise(wav_path)
+    mp3_file = convert_wav_to_mp3(wav_path)
     if not mp3_file:
-        return jsonify({'error': 'WAV to MP3 conversion failed'}), 500
+        return jsonify({'error': 'Conversion to MP3 failed.'}), 500
 
-    # Single call to Vertex AI for transcript + sentiment
     try:
-        with open(wav_file, 'rb') as f:
+        with open(wav_path, 'rb') as f:
             audio_bytes = f.read()
-
-        # Wrapping the audio in a Part object and attach the prompt
+        trans_prompt = "Please transcribe this audio:"
         audio_part = Part.from_data(audio_bytes, mime_type="audio/wav")
-        contents = [audio_part, MODEL_PROMPT]
-
-        response = model.generate_content(contents)
-        print("[INFO] LLM response:", response.text)
-
-        # Parsing the response; expected format:
-        # "Text: <transcript>"
-        # "Sentiment Analysis: <positive|neutral|negative>"
-        transcript_line, sentiment_line = "", ""
-        for line in response.text.splitlines():
-            if line.startswith("Text:"):
-                transcript_line = line.replace("Text:", "").strip()
-            elif line.startswith("Sentiment Analysis:"):
-                sentiment_line = line.replace("Sentiment Analysis:", "").strip()
-
-        # Saving the transcript to a text file
-        transcript_path = wav_file.replace('.wav', '.txt')
-        with open(transcript_path, 'w') as txt_file:
-            txt_file.write(transcript_line)
-
-        # Saving the sentiment analysis to a separate text file
-        sentiment_path = transcript_path.replace('.txt', '_sentiment.txt')
-        with open(sentiment_path, 'w') as s_file:
-            s_file.write(f"Text: {transcript_line}\n")
-            s_file.write(f"Sentiment: {sentiment_line}\n")
-
-        return jsonify({
-            'processed_file': os.path.basename(mp3_file),
-            'transcription_file': os.path.basename(transcript_path),
-            'sentiment': sentiment_line,
-            'sentiment_analysis_file': os.path.basename(sentiment_path)
-        }), 200
-
+        contents = [audio_part, trans_prompt]
+        trans_response = model.generate_content(contents)
+        question_text = trans_response.text.strip()
     except Exception as e:
-        print(f"[ERROR] Vertex AI processing failed: {e}")
-        return jsonify({'error': 'Vertex AI processing failed'}), 500
+        print(f"[ERROR] Transcription failed: {e}")
+        return jsonify({'error': 'Transcription error.'}), 500
+
+    try:
+        combined_prompt = f"""
+        Below is the content of a book:
+        {book_text}
+        
+        The user asks:
+        "{question_text}"
+        
+        Please provide a concise, informative answer based on the book.
+        """
+        prompt_part = Part.from_text(combined_prompt)
+        answer_response = model.generate_content([prompt_part])
+        answer_text = answer_response.text.strip()
+    except Exception as e:
+        print(f"[ERROR] LLM processing failed: {e}")
+        return jsonify({'error': 'Answer generation error.'}), 500
+
+    try:
+        tts_filename = text_to_speech(answer_text)
+    except Exception as e:
+        print(f"[ERROR] Text-to-Speech failed: {e}")
+        return jsonify({'error': 'TTS error.'}), 500
+
+    append_history(question_text, answer_text, tts_filename)
+
+    return jsonify({
+        'transcribed_question': question_text,
+        'answer_text': answer_text,
+        'tts_file': tts_filename
+    }), 200
 
 @app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    """Serve files (MP3, .txt) from the uploads directory."""
+def get_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 if __name__ == '__main__':
-    print("[INFO] Starting Flask on port 8080...")
+    print("[INFO] Starting Book Interaction Hub on port 8080...")
     app.run(host='0.0.0.0', port=8080, debug=True)
