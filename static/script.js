@@ -1,98 +1,114 @@
-const recordButton = document.getElementById('record');
-const stopButton = document.getElementById('stop');
-const timerDisplay = document.getElementById('timer');
-const audioList = document.getElementById('audioList');
-const errorMessage = document.getElementById('errorMessage');
+// Unique naming to ensure uniqueness
+const recordBtn = document.getElementById('recordBtn');
+const stopBtn = document.getElementById('stopBtn');
+const timerEl = document.getElementById('timerDisplay');
+const answerSection = document.getElementById('answerSection');
+const errorEl = document.getElementById('errorDisplay');
 
-let mediaRecorder;
-let audioChunks = [];
-let startTime;
-let timerInterval;
+let recorder;
+let audioData = [];
+let recordStartTime;
+let recordInterval;
 
-function displayErrorMessage(msg) {
-  errorMessage.textContent = msg;
+function displayError(msg) {
+  errorEl.textContent = msg;
 }
 
-// Start Recording
-recordButton.addEventListener('click', async () => {
+recordBtn.addEventListener('click', async () => {
   try {
     console.log("[INFO] Requesting microphone access...");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-    audioChunks = [];
-    mediaRecorder.ondataavailable = event => {
-      audioChunks.push(event.data);
+    recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    audioData = [];
+    recorder.ondataavailable = event => {
+      audioData.push(event.data);
     };
-    mediaRecorder.start();
-    startTime = Date.now();
-    timerInterval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      timerDisplay.textContent = `Recording: ${formatTime(elapsed)}`;
+    recorder.start();
+    recordStartTime = Date.now();
+    recordInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - recordStartTime) / 1000);
+      timerEl.textContent = `Recording: ${formatTime(elapsed)}`;
     }, 1000);
-    recordButton.disabled = true;
-    stopButton.disabled = false;
-    timerDisplay.textContent = "Recording...";
+    recordBtn.disabled = true;
+    stopBtn.disabled = false;
+    timerEl.textContent = "Recording in progress...";
     console.log("[INFO] Recording started...");
   } catch (error) {
-    console.error('[ERROR] Microphone access denied:', error);
-    displayErrorMessage('Microphone access denied. Please enable permissions.');
+    console.error("[ERROR] Microphone access denied:", error);
+    displayError("Microphone access denied. Please enable permissions.");
   }
 });
 
-// Stop Recording & Upload
-stopButton.addEventListener('click', () => {
-  if (!mediaRecorder) {
-    console.error("[ERROR] No active mediaRecorder found.");
+stopBtn.addEventListener('click', () => {
+  if (!recorder) {
+    console.error("[ERROR] No active recorder found.");
     return;
   }
-  mediaRecorder.stop();
-  clearInterval(timerInterval);
-  timerDisplay.textContent = "Processing...";
-  mediaRecorder.onstop = async () => {
-    console.log("[INFO] Recording stopped. Preparing file for upload...");
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+  recorder.stop();
+  clearInterval(recordInterval);
+  timerEl.textContent = "Processing...";
+  recorder.onstop = async () => {
+    console.log("[INFO] Recording stopped. Preparing upload...");
+    const blob = new Blob(audioData, { type: 'audio/webm' });
     const formData = new FormData();
-    formData.append('audio_data', audioBlob, 'recorded_audio.webm');
+    formData.append('audio_data', blob, 'user_query.webm');
     try {
-      const response = await fetch('/upload', { method: 'POST', body: formData });
-      const data = await response.json();
-      if (data.error) {
-        displayErrorMessage(`Upload Error: ${data.error}`);
+      const response = await fetch('/ask_book', { method: 'POST', body: formData });
+      const result = await response.json();
+      if (result.error) {
+        displayError(`Upload Error: ${result.error}`);
         return;
       }
-      if (data.processed_file) {
-        console.log("[INFO] Upload successful:", data.processed_file);
-        // Create a new list item with the new MP3 file and sentiment file link
-        const newAudioItem = document.createElement('li');
-        newAudioItem.innerHTML = `
+      if (result.tts_file) {
+        // Append the live response to the answer section
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <p><strong>Question:</strong> ${result.transcribed_question}</p>
+          <p><strong>Answer:</strong> ${result.answer_text}</p>
           <audio controls>
-            <source src="/uploads/${data.processed_file}" type="audio/mp3">
-            Your browser does not support the audio element.
+            <source src="/uploads/${result.tts_file}" type="audio/mp3">
+            Your browser does not support audio.
           </audio>
-          <br><strong>${data.processed_file}</strong>
-          <p>
-            <a href="/uploads/${data.sentiment_analysis_file}" target="_blank">
-              Download Sentiment Analysis
-            </a>
-          </p>
         `;
-        audioList.appendChild(newAudioItem);
-        timerDisplay.textContent = "Recording saved!";
+        answerSection.appendChild(li);
+        // Optionally, update the results panels directly
+        // Assuming history panels with IDs "historyText" and "historyAudio" exist,
+        // you can append the new result to them (if live updates are desired).
+        const newTextEntry = document.createElement('li');
+        newTextEntry.innerHTML = `
+          <p><strong>${new Date().toLocaleString()}</strong></p>
+          <p><strong>Q:</strong> ${result.transcribed_question}</p>
+          <p><strong>A:</strong> ${result.answer_text}</p>
+        `;
+        const newAudioEntry = document.createElement('li');
+        newAudioEntry.innerHTML = `
+          <audio controls>
+            <source src="/uploads/${result.tts_file}" type="audio/mp3">
+            Your browser does not support audio.
+          </audio>
+        `;
+        // Append to history panels if they exist:
+        const historyTextPanel = document.getElementById('historyText');
+        const historyAudioPanel = document.getElementById('historyAudio');
+        if(historyTextPanel && historyAudioPanel) {
+          historyTextPanel.appendChild(newTextEntry);
+          historyAudioPanel.appendChild(newAudioEntry);
+        }
+        timerEl.textContent = "Response ready!";
       } else {
-        displayErrorMessage("Upload failed. No file info from server.");
+        displayError("Upload failed: No TTS file information received.");
       }
     } catch (err) {
-      console.error('[ERROR] Upload failed:', err);
-      displayErrorMessage('Failed to upload the audio.');
+      console.error("[ERROR] Upload process failed:", err);
+      displayError("Failed to process your question.");
     }
   };
-  recordButton.disabled = false;
-  stopButton.disabled = true;
+  recordBtn.disabled = false;
+  stopBtn.disabled = true;
 });
 
-// Format Time
 function formatTime(seconds) {
-  const minutes = Math.floor(seconds / 60);
+  const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
