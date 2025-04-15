@@ -1,5 +1,5 @@
-Flask==3.1.0
-google-cloud-aiplatform==1.76.0
+Flask
+google-cloud-aiplatform
 vertexai
 noisereduce
 soundfile
