@@ -1,85 +1,149 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Audio Recorder & Sentiment Analysis</title>
+  <meta charset="UTF-8">
+  <title>Book Interaction Hub</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #f4f4f4;
-      text-align: center;
-      margin: 0;
-      padding: 0;
+    body { 
+      font-family: 'Segoe UI', sans-serif; 
+      background-color: #f0f8ff; 
+      margin: 0; 
+      padding: 0; 
+      text-align: center; 
     }
     .container {
-      width: 90%;
+      max-width: 80%;
       margin: 20px auto;
-      background: white;
+      background: #fff;
       padding: 20px;
-      border-radius: 5px;
-      box-shadow: 2px 2px 10px gray;
+      border-radius: 8px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.1);
     }
     button {
-      padding: 10px 15px;
+      padding: 10px 20px;
+      background: #007BFF;
+      color: #fff;
       border: none;
-      background: #acaf4c;
-      color: white;
+      border-radius: 4px;
       cursor: pointer;
-      margin: 5px;
+      margin: 10px;
     }
-    button:hover {
-      background: #ffd700;
+    button:hover { background: #0056b3; }
+    #timerDisplay { font-size: 20px; margin: 10px 0; }
+    #errorDisplay { color: red; font-weight: bold; }
+    h1, h2 { margin: 10px 0; }
+    #uploadSection, #recordSection, #answersSection, #resultsSection {
+      margin: 30px 0;
     }
-    #timer {
-      font-size: 18px;
-      margin-top: 10px;
+    /* Results Panel divided into two columns */
+    .results-panel {
+      display: flex;
+      justify-content: space-between;
+      border: 1px solid #ccc;
+      padding: 10px;
+      border-radius: 5px;
+      background: #fafafa;
     }
-    ul {
-      list-style-type: none;
-      padding: 0;
+    .result-text, .result-audio {
+      flex: 1;
+      margin: 10px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background: #fff;
     }
-    li {
-      margin-bottom: 1em;
-    }
-    .error-message {
-      color: red;
-      font-weight: bold;
+    .result-text pre {
+      text-align: left;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Audio Recorder & Sentiment Analysis</h1>
-    <p class="error-message" id="errorMessage"></p>
-    <button id="record">Record</button>
-    <button id="stop" disabled>Stop</button>
-    <p id="timer">00:00</p>
-    <audio id="audio" controls></audio>
-    <hr />
-    <h2>Recorded Audio Files</h2>
-    <ul id="audioList">
-      {% for file in audio_files %}
-      <li>
-        <audio controls>
-          <source src="{{ url_for('uploaded_file', filename=file) }}" type="audio/mp3">
-          Your browser does not support the audio element.
-        </audio>
-        <br><strong>{{ file }}</strong>
-        <p>
-          <a href="{{ url_for('uploaded_file', filename=file.replace('.mp3', '_sentiment.txt')) }}"
-             target="_blank">
-            Download Sentiment Analysis
-          </a>
-        </p>
-      </li>
-      {% endfor %}
-    </ul>
+    <h1>Book Interaction Hub</h1>
+    <!-- PDF Upload Section -->
+    <div id="uploadSection">
+      <h2>Upload Your PDF Book</h2>
+      <form id="pdfForm" action="/upload_pdf" method="post" enctype="multipart/form-data">
+        <input type="file" name="bookPdf" accept="application/pdf" required>
+        <button type="submit">Upload Book</button>
+      </form>
+      <!-- Element to display upload messages -->
+      <p id="uploadMessage" style="color: green; font-weight: bold;"></p>
+    </div>
+    <!-- Audio Recording Section -->
+    <div id="recordSection">
+      <h2>Ask a Question</h2>
+      <p id="errorDisplay"></p>
+      <button id="recordBtn">Start Recording</button>
+      <button id="stopBtn" disabled>Stop Recording</button>
+      <p id="timerDisplay">00:00</p>
+    </div>
+    <!-- Answers (Live Response) Section -->
+    <div id="answersSection">
+      <h2>Response</h2>
+      <ul id="answerSection"></ul>
+    </div>
+    <!-- Results Section -->
+    <div id="resultsSection">
+      <h2>Results</h2>
+      <div class="results-panel">
+        <div class="result-text">
+          <h3>Text</h3>
+          <ul id="historyText">
+            {% for entry in conversation_history %}
+            <li>
+              <p><strong>{{ entry.timestamp }}</strong></p>
+              <p><strong>Q:</strong> {{ entry.question }}</p>
+              <p><strong>A:</strong> {{ entry.answer }}</p>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="result-audio">
+          <h3>Audio</h3>
+          <ul id="historyAudio">
+            {% for entry in conversation_history %}
+            <li>
+              <audio controls>
+                <source src="/uploads/{{ entry.audio }}" type="audio/mp3">
+                Your browser does not support audio.
+              </audio>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
   </div>
+  
+  <!-- JavaScript for handling the PDF form submission -->
   <script>
-    function displayErrorMessage(message) {
-      document.getElementById("errorMessage").textContent = message;
-    }
+    document.getElementById("pdfForm").addEventListener("submit", async function(e) {
+      e.preventDefault(); // Prevent the default form submission behavior.
+      
+      const uploadMessageEl = document.getElementById("uploadMessage");
+      uploadMessageEl.textContent = "Uploading book...";
+      
+      const form = e.target;
+      const formData = new FormData(form);
+      
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: formData
+        });
+        
+        // Get the text response (assuming a plain text response from the backend).
+        const resultText = await response.text();
+        uploadMessageEl.textContent = resultText;
+      } catch (err) {
+        console.error("PDF upload failed:", err);
+        uploadMessageEl.textContent = "Failed to upload the book.";
+      }
+    });
   </script>
+  
   <script src="/static/script.js"></script>
 </body>
 </html>
