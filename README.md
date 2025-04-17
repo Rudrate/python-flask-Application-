@@ -1,27 +1,30 @@
-# Speech-to-Text Web App
+# Book Interaction Hub
 
-This project is a simple web application built using Python and Flask. The app allows users to record audio, upload recordings, and convert speech to text using Google's Speech-to-Text API. Additionally, the app can generate speech from text input using Google's Text-to-Speech API.
+**Multi‑Modal Q&A with Vertex AI LLM**
 
-## Features
+A simple Flask app that lets you:
+- Upload a Project Gutenberg PDF
+- Ask questions by speaking in the browser
+- Get back both text and audio answers via Vertex AI & Cloud TTS
 
-- Record audio through your microphone.
-- Upload the recorded audio and get the text transcription.
-- Convert text input into speech and listen to the audio output.
-- Deployed to Google Cloud Run for easy access.
+---
 
-## Technologies Used
+## Quickstart
 
-- **Python**: Web framework (Flask)
-- **Google Cloud APIs**: Speech-to-Text, Text-to-Speech
-- **Docker**: Containerization of the application
-- **Google Cloud Run**: Deployment and hosting
-- **GitHub**: Version control
-
-## Getting Started
-
-### Prerequisites
-
-1. **Python 3.x** and **pip** (Python's package installer)
-2. **Flask**: Install via pip
+1. Clone:
    ```bash
-   pip install flask
+   git clone https://github.com/Rudrate/python-flask-Application-.git
+Build & run locally:
+docker build -t book-hub .
+docker run -p 8080:8080 book-hub
+
+Visit http://localhost:8080
+
+Links
+Live App: https://book-interaction-hub-service-594549298283.us-central1.run.app
+
+Repo: https://github.com/Rudrate/python-flask-Application-
+
+Gutenberg Book: The Prince by Niccolò Machiavelli
+
+Copy
